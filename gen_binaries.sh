@@ -53,7 +53,7 @@ do
             ;;
         --input)
             shift;
-            inputs_type=$1
+            input_type=$1
             ;;
         -h | -H | -help)
             usage
@@ -123,7 +123,7 @@ if [ "$compileFlag" = true ]; then
       if [[ "${input_type}" == "ref" ]]; then
          host_bmk_dir=${bmark_base_dir}/run/run_base_ref${class}_${H_CONFIG}-m64.0000;
       else
-         host_bmk_dir=${bmark_base_dir}/run/run_base_${input}_${H_CONFIG}-m64.0000;
+         host_bmk_dir=${bmark_base_dir}/run/run_base_${input_type}_${H_CONFIG}-m64.0000;
       fi
 
       # Copy the inputs from the host build
