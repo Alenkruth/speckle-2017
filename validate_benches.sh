@@ -54,7 +54,7 @@ run_benchmark() {
         return
     fi
 
-    local args=$(grep -oP '(?<=riscv-64 ).*' $run_script | head -1)
+    local args=$(grep -v '^echo' $run_script | grep -oP '(?<=riscv-64 ).*' | head -1)
 
     cd $bench_dir
     timeout $TIMEOUT $SPIKE --isa=$ISA $PK $binary $args \

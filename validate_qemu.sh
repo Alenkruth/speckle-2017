@@ -34,24 +34,55 @@ echo "[$(date +%H:%M:%S)] Suite=$SUITE Jobs=$JOBS Timeout=${TIMEOUT}s" | tee $LO
 run_benchmark() {
     local bench_dir=$1
     local bench=$(basename $bench_dir)
-    local binary=$(ls $bench_dir*_base.riscv-64 2>/dev/null | head -1)
+    # Extract the actual binary name from run_workload0.sh (some dirs have multiple
+    # *_base.riscv-64 binaries, e.g. 621.wrf_s has diffwrf_621_base.riscv-64)
+    local binary_name=$(grep -v '^echo' $bench_dir/run_workload0.sh | grep -oP '\./\S+_base\.riscv-64' | head -1 | sed 's|^\./||')
+    local binary="$bench_dir$binary_name"
+    if [ ! -f "$binary" ]; then
+        binary=$(ls $bench_dir*_base.riscv-64 2>/dev/null | head -1)
+    fi
 
     if [ -z "$binary" ]; then
         echo "[$(date +%H:%M:%S)] SKIP $bench (no binary)" | tee -a $LOG
         return
     fi
 
-    local args=$(grep -oP '(?<=riscv-64 ).*' $bench_dir/run_workload0.sh | head -1)
+    local raw_cmd=$(grep -v '^echo' $bench_dir/run_workload0.sh | grep -oP '(?<=riscv-64 ).*' | head -1)
+    local args=""
+    local stdin_file=""
+
+    # For fp suites, handle stdin redirect (e.g. bwaves, roms: "< input.in")
+    # and strip stdout/stderr redirects (e.g. wrf: "> rsl.out 2>> wrf.err")
+    if [[ "$SUITE" == "fpspeed" || "$SUITE" == "fprate" ]]; then
+        # Extract stdin file if present: "... < file.in"
+        if [[ "$raw_cmd" =~ \<[[:space:]]*([^[:space:]]+) ]]; then
+            stdin_file="${BASH_REMATCH[1]}"
+        fi
+        # Strip everything from the first redirect operator onwards
+        args=$(echo "$raw_cmd" | sed -E 's/[[:space:]]*[<>].*$//')
+    else
+        args="$raw_cmd"
+    fi
+
     local outfile=$BBV_DIR/${bench}.bb
 
     echo "[$(date +%H:%M:%S)] START $bench" | tee -a $LOG
     cd $bench_dir
 
-    timeout $TIMEOUT $QEMU \
-        -plugin $PLUGIN,outfile=$outfile,interval=$INTERVAL \
-        $binary $args \
-        > $BBV_DIR/${bench}.stdout \
-        2> $BBV_DIR/${bench}.stderr
+    if [ -n "$stdin_file" ]; then
+        timeout $TIMEOUT $QEMU \
+            -plugin $PLUGIN,outfile=$outfile,interval=$INTERVAL \
+            $binary $args \
+            < "$stdin_file" \
+            > $BBV_DIR/${bench}.stdout \
+            2> $BBV_DIR/${bench}.stderr
+    else
+        timeout $TIMEOUT $QEMU \
+            -plugin $PLUGIN,outfile=$outfile,interval=$INTERVAL \
+            $binary $args \
+            > $BBV_DIR/${bench}.stdout \
+            2> $BBV_DIR/${bench}.stderr
+    fi
 
     local exit_code=$?
     if [ $exit_code -eq 124 ]; then
@@ -64,7 +95,7 @@ run_benchmark() {
 }
 
 export -f run_benchmark
-export QEMU PLUGIN BBV_DIR INTERVAL TIMEOUT LOG
+export QEMU PLUGIN BBV_DIR INTERVAL TIMEOUT LOG SUITE
 
 # Job pool
 active=0
@@ -83,13 +114,13 @@ echo ""
 echo "=== BBV output check ==="
 for bench_dir in $BENCH_DIR/*/; do
     bench=$(basename $bench_dir)
-    bbv=$BBV_DIR/${bench}.bb
-    if [ ! -f "$bbv" ]; then
+    bbv=$(ls $BBV_DIR/${bench}.bb* 2>/dev/null | head -1)
+    if [ -z "$bbv" ]; then
         echo "MISSING  $bench"
     elif [ ! -s "$bbv" ]; then
         echo "EMPTY    $bench"
     else
         intervals=$(grep -c '^T:' $bbv)
-        echo "OK       $bench — $intervals intervals"
+        echo "OK       $bench — $intervals intervals ($(basename $bbv))"
     fi
 done
