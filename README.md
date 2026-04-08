@@ -31,22 +31,32 @@ export SPEC_DIR=/path/to/SPEC_CPU_2017
 # generate the fprate benchmarks
 ./gen_binaries.sh --compile --suite fprate --input ref
 
+# generate the intspeed benchmarks
+./gen_binaries.sh --compile --suite intspeed --input ref
+
+# generate the fpspeed benchmarks
+./gen_binaries.sh --compile --suite fpspeed --input ref
+
 # if sucessful, all files are located in
 ls -l build/overlay/intrate
 ls -l build/overlay/fprate
+ls -l build/overlay/intspeed
+ls -l build/overlay/fpspeed
 
 ~~~
 
 Some extra fixes need to be done manually.
 
-* Input 1 of 525.x264\_r depends on the log output of input 0. Since we normally do not run the whole benchmark, we need to copy a prepared log to the running directory for running input 1:
+* Input 1 of 525.x264\_r (or 625.x264\_s) depends on the log output of input 0. Since we normally do not run the whole benchmark, we need to copy a prepared log to the running directory for running input 1:
 
 ~~~
 cp -r 525.x264_r build/overlay/intrate/
+cp -r 625.x264_s build/overlay/intspeed/
 ~~~
 
-* 521.wrf\_r has a different running procedure. It lets wrf run to generate a putput file, and then using diffwrf to compare this output file with a prepared output for correctness. The script in Speckle seems to believe the following comparison as the main benchmark and generate a wrong running script. To fix this:
+* 521.wrf\_r (or 621.wrf\_s) has a different running procedure. It lets wrf run to generate a putput file, and then using diffwrf to compare this output file with a prepared output for correctness. The script in Speckle seems to believe the following comparison as the main benchmark and generate a wrong running script. To fix this:
 ~~~
 cp -r 521.wrf_r build/overlay/fprate/
+cp -r 621.wrf_s build/overlay/fpspeed/
 ~~~
 
