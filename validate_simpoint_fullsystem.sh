@@ -8,28 +8,42 @@
 # Sister to validate_simpoint.sh (user-mode flow).
 #
 # Usage:
-#   ./validate_simpoint_fullsystem.sh
+#   ./validate_simpoint_fullsystem.sh                  # intspeed defaults
+#   ./validate_simpoint_fullsystem.sh --suite fpspeed
 #   ./validate_simpoint_fullsystem.sh --jobs 8 --maxk 8
 #   ./validate_simpoint_fullsystem.sh --bbv-dir /path/to/bbvs
 
+set -u
+
 SIMPOINT=/home/jht9sy/work/simpoint/bin/simpoint
-BBV_DIR=/data/akrish/riscv-spec2017-bbvs/intspeed-fullsystem
-SIMPOINT_DIR=/data/akrish/riscv-simpoints/sanity/intspeed-fullsystem
+BBV_ROOT=/data/akrish/riscv-spec2017-bbvs
+SIMPOINT_ROOT=/data/akrish/riscv-simpoints/sanity
 JOBS=10
 MAXK=8
+SUITE=intspeed
+BBV_DIR_OVERRIDE=""
+SIMPOINT_DIR_OVERRIDE=""
 
 while [[ $# -gt 0 ]]; do
     case $1 in
-        --jobs)         JOBS=$2;          shift 2 ;;
-        --maxk)         MAXK=$2;          shift 2 ;;
-        --bbv-dir)      BBV_DIR=$2;       shift 2 ;;
-        --simpoint-dir) SIMPOINT_DIR=$2;  shift 2 ;;
-        *) echo "Unknown arg: $1"; exit 1 ;;
+        --suite)         SUITE=$2;                  shift 2 ;;
+        --jobs)          JOBS=$2;                   shift 2 ;;
+        --maxk)          MAXK=$2;                   shift 2 ;;
+        --bbv-dir)       BBV_DIR_OVERRIDE=$2;       shift 2 ;;
+        --simpoint-dir)  SIMPOINT_DIR_OVERRIDE=$2;  shift 2 ;;
+        *) echo "Unknown arg: $1" >&2; exit 1 ;;
     esac
 done
 
+# By default consume the sanity full-system BBVs produced by
+# validate_qemu_system.sh, which writes to /bbv-sanity/<suite>-fullsystem/.
+# If the user has full BBVs in /<suite>-fullsystem/ they can point at
+# those via --bbv-dir.
+BBV_DIR=${BBV_DIR_OVERRIDE:-$BBV_ROOT/bbv-sanity/${SUITE}-fullsystem}
+SIMPOINT_DIR=${SIMPOINT_DIR_OVERRIDE:-$SIMPOINT_ROOT/${SUITE}-fullsystem}
+
 if [ ! -d "$BBV_DIR" ]; then
-    echo "ERROR: $BBV_DIR does not exist — run bbv_qemu_system.sh or validate_qemu_system.sh first"
+    echo "ERROR: $BBV_DIR does not exist — run validate_qemu_system.sh --suite $SUITE first"
     exit 1
 fi
 if [ ! -x "$SIMPOINT" ]; then
@@ -37,9 +51,17 @@ if [ ! -x "$SIMPOINT" ]; then
     exit 1
 fi
 
+shopt -s nullglob
+BBV_FILES=( "$BBV_DIR"/*.bb.0.bb )
+shopt -u nullglob
+if [ ${#BBV_FILES[@]} -eq 0 ]; then
+    echo "ERROR: no .bb.0.bb files found in $BBV_DIR"
+    exit 1
+fi
+
 mkdir -p "$SIMPOINT_DIR"
 LOG=$SIMPOINT_DIR/sanity.log
-echo "[$(date +%H:%M:%S)] BBV_DIR=$BBV_DIR Jobs=$JOBS MaxK=$MAXK" | tee "$LOG"
+echo "[$(date +%H:%M:%S)] Suite=$SUITE BBV_DIR=$BBV_DIR Workloads=${#BBV_FILES[@]} Jobs=$JOBS MaxK=$MAXK" | tee "$LOG"
 
 run_simpoint() {
     local bbv=$1
@@ -71,8 +93,7 @@ export -f run_simpoint
 export SIMPOINT SIMPOINT_DIR MAXK LOG
 
 active=0
-for bbv in "$BBV_DIR"/*.bb.0.bb; do
-    [ -e "$bbv" ] || { echo "ERROR: no BBV files found in $BBV_DIR"; exit 1; }
+for bbv in "${BBV_FILES[@]}"; do
     run_simpoint "$bbv" &
     ((active++))
     if [ $active -ge $JOBS ]; then
@@ -85,7 +106,7 @@ wait
 echo "[$(date +%H:%M:%S)] Sanity complete" | tee -a "$LOG"
 echo
 echo "=== Simpoint output check ==="
-for bbv in "$BBV_DIR"/*.bb.0.bb; do
+for bbv in "${BBV_FILES[@]}"; do
     bench=$(basename "$bbv" .bb.0.bb)
     sp=$SIMPOINT_DIR/$bench.simpoints
     wt=$SIMPOINT_DIR/$bench.weights
