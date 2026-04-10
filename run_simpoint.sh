@@ -17,8 +17,8 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 
-BBV_DIR=/data/akrish/riscv-spec2017-bbvs/$SUITE
-SIMPOINT_DIR=/data/akrish/simpoints/$SUITE
+BBV_DIR=/data/akrish/riscv-spec2017-bbvs/${SUITE}-fixed
+SIMPOINT_DIR=/data/akrish/riscv-simpoints/$SUITE
 
 if [ ! -d "$BBV_DIR" ]; then
     echo "ERROR: $BBV_DIR does not exist"
