@@ -67,11 +67,6 @@ run_simpoint() {
     local bench=$(basename "$bbv" .bb.0.bb)
     local outbase=$SIMPOINT_DIR/$bench
 
-    if [ -f "$outbase.simpoints" ] && [ -s "$outbase.simpoints" ]; then
-        echo "[$(date +%H:%M:%S)] SKIP $bench (exists)" | tee -a "$LOG"
-        return
-    fi
-
     echo "[$(date +%H:%M:%S)] START $bench" | tee -a "$LOG"
     local t0=$(date +%s)
 

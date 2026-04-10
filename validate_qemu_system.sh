@@ -98,21 +98,28 @@ printf '  %s\n' "${WORKLOADS[@]}" | tee -a "$LOG"
 
 run_one() {
   local w=$1
-  local bin=$IMG_BASE/$w/$w-bin
-  local img=$IMG_BASE/$w/$w.img
   local out=$BBV_DIR/$w.bb
 
-  if [ ! -f "$bin" ] || [ ! -f "$img" ]; then
-    echo "[$(date +%H:%M:%S)] SKIP $w (missing image)" | tee -a "$LOG"
+  # Auto-detect: prefer nodisk, fall back to disk mode
+  local bin disk_args mode
+  if [ -f "$IMG_BASE/$w/$w-bin-nodisk" ]; then
+    bin=$IMG_BASE/$w/$w-bin-nodisk
+    disk_args=()
+    mode=nodisk
+  elif [ -f "$IMG_BASE/$w/$w-bin" ] && [ -f "$IMG_BASE/$w/$w.img" ]; then
+    bin=$IMG_BASE/$w/$w-bin
+    disk_args=( -drive "file=$IMG_BASE/$w/$w.img,format=raw,id=hd0,if=none" -device virtio-blk-device,drive=hd0 )
+    mode=disk
+  else
+    echo "[$(date +%H:%M:%S)] SKIP $w (no nodisk or disk image found)" | tee -a "$LOG"
     return
   fi
 
-  echo "[$(date +%H:%M:%S)] START $w" | tee -a "$LOG"
+  echo "[$(date +%H:%M:%S)] START $w ($mode)" | tee -a "$LOG"
   local t0=$(date +%s)
   "$QEMU" -M virt -m "$MEM" -nographic -bios none \
     -kernel "$bin" \
-    -drive "file=$img,format=raw,id=hd0,if=none" \
-    -device virtio-blk-device,drive=hd0 \
+    "${disk_args[@]}" \
     -plugin "$BBV_PLUGIN,outfile=$out,interval=$INTERVAL" \
     -plugin "$STOP_PLUGIN,icount=$MAX_INSNS" \
     > "$BBV_DIR/$w.stdout" 2> "$BBV_DIR/$w.stderr"
