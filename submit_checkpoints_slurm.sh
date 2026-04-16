@@ -36,10 +36,11 @@ set -u
 SPECKLE_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 # Paths that mirror generate_checkpoints_fullsystem.sh
-RT=/home/jht9sy/work/chipyard/.conda-env/riscv-tools
-IMG_BASE=/home/jht9sy/work/chipyard/software/firemarshal/images/firechip
-SIMPOINT_ROOT=/data/akrish/riscv-simpoints
-CKPT_ROOT=/data/akrish/checkpoints
+CHIPYARD=/p/csd/jht9sy/chipyard
+RT=$CHIPYARD/.conda-env/riscv-tools
+IMG_BASE=/p/csd/jht9sy/checkpoints/images
+SIMPOINT_ROOT=/p/csd/jht9sy/checkpoints/simpoints
+CKPT_ROOT=/p/csd/jht9sy/checkpoints/ckpts
 INTERVAL=100000000
 ISA=rv64gc
 SUITE=intspeed

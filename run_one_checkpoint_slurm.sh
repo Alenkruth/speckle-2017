@@ -17,15 +17,18 @@
 
 set -u
 
-RT=/home/jht9sy/work/chipyard/.conda-env/riscv-tools
+CHIPYARD=/p/csd/jht9sy/chipyard
+source "$CHIPYARD/env.sh" 2>/dev/null || true
+
+RT=$CHIPYARD/.conda-env/riscv-tools
 SPIKE=$RT/bin/spike
 OBJCOPY=$RT/bin/riscv64-unknown-elf-objcopy
 LD=$RT/bin/riscv64-unknown-elf-ld
 NM=$RT/bin/riscv64-unknown-elf-nm
 SPIKE_DEVICES=$RT/lib/libspikedevices.so
 
-IMG_BASE=/home/jht9sy/work/chipyard/software/firemarshal/images/firechip
-CKPT_DIR=/data/akrish/checkpoints/intspeed-fullsystem
+IMG_BASE=/p/csd/jht9sy/checkpoints/images
+CKPT_DIR=/p/csd/jht9sy/checkpoints/ckpts
 ISA=rv64gc
 MEM_BASE=0x80000000
 MEM_SIZE=0x800000000
