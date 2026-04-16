@@ -20,8 +20,8 @@ set -u
 SIMPOINT=/home/jht9sy/work/simpoint/bin/simpoint
 BBV_ROOT=/data/akrish/riscv-spec2017-bbvs
 SIMPOINT_ROOT=/data/akrish/riscv-simpoints
-JOBS=4
-MAXK=30
+JOBS=11
+MAXK=8
 SUITE=intspeed
 BBV_DIR_OVERRIDE=""
 SIMPOINT_DIR_OVERRIDE=""
