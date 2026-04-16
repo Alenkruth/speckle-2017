@@ -102,12 +102,27 @@ check_loadarch() {
     echo "RESET_VECTOR_PC"
     return
   fi
-  if grep -q 'trap_illegal_instruction\|Received trap' "$loadarch" 2>/dev/null; then
+  # Trap check: only examine lines 11-94.
+  # Lines 6-10 are the 5 vector CSR reads (vstart/vxsat/vxrm/vcsr/vtype); on a
+  # non-V spike these produce "0xReceived trap: trap_illegal_instruction" which is
+  # expected and maps to 0 when parsed by testchip_dtm.cc via stoull.
+  # Line 95 is the vreg placeholder — also expected to contain "Received trap"
+  # or "Processor selected does not support any vector extensions".
+  # A real trap (e.g. during fast-forward or on a GPR/FPR/CSR read) would appear
+  # on lines 11-94 where only valid hex values should be.
+  local nlines=$(wc -l < "$loadarch")
+  if sed -n '11,94p' "$loadarch" 2>/dev/null | grep -q 'trap_illegal_instruction\|Received trap'; then
     echo "TRAP_ILLEGAL_INSN"
     return
   fi
   if [ -z "$pc" ] || [ "$pc" = "0x0000000000000000" ]; then
     echo "ZERO_PC"
+    return
+  fi
+
+  # Verify line count — the testchip_dtm.cc parser expects exactly 95 lines.
+  if [ "$nlines" -ne 95 ]; then
+    echo "WRONG_LINE_COUNT:$nlines"
     return
   fi
 
@@ -191,19 +206,22 @@ validate_one() {
   echo "[$(date +%H:%M:%S)] START $w sp_$cluster ($mode, interval=$interval, insns=$insn_hex)" | tee -a "$LOG"
   local t0=$(date +%s)
 
-  # Run spike
+  # Run spike from inside outdir so `dump` writes mem.<addr>.bin there.
+  # Without the cd, all parallel validate_one jobs would write to the same
+  # relative path in CWD and clobber each other.
   local loadarch=$outdir/loadarch
   echo 1 > "$loadarch"
-  $SPIKE -d --debug-cmd="$cmds" \
-    $spike_extra_args \
-    --pmpregions=0 --isa=$ISA -p1 \
-    -m$MEM_BASE:$MEM_SIZE \
-    "$bin" 2>> "$loadarch"
+  ( cd "$outdir" && \
+    $SPIKE -d --debug-cmd="$cmds" \
+      $spike_extra_args \
+      --pmpregions=0 --isa=$ISA -p1 \
+      -m$MEM_BASE:$MEM_SIZE \
+      "$bin" 2>> "$loadarch" )
   local spike_rc=$?
   local dt=$(( $(date +%s) - t0 ))
 
-  # Convert memory dump to ELF
-  local mem_dump="mem.$MEM_BASE.bin"
+  # Convert memory dump to ELF — spike wrote it inside $outdir
+  local mem_dump="$outdir/mem.$MEM_BASE.bin"
   if [ -f "$mem_dump" ]; then
     local raw_elf=$outdir/raw.elf
     local mem_elf=$outdir/mem.elf
@@ -244,8 +262,9 @@ validate_one() {
     KERNEL_PANIC)
       echo "[$(date +%H:%M:%S)] FAIL $w sp_$cluster — kernel panic in loadarch (spike rc=$spike_rc, ${dt}s)" | tee -a "$LOG"
       ;;
-    RECEIVED_TRAP)
-      echo "[$(date +%H:%M:%S)] FAIL $w sp_$cluster — trap received in loadarch (spike rc=$spike_rc, ${dt}s)" | tee -a "$LOG"
+    WRONG_LINE_COUNT:*)
+      local got=${status#WRONG_LINE_COUNT:}
+      echo "[$(date +%H:%M:%S)] FAIL $w sp_$cluster — wrong line count: got $got, expected 95 (spike rc=$spike_rc, ${dt}s)" | tee -a "$LOG"
       ;;
     RESET_VECTOR_PC)
       echo "[$(date +%H:%M:%S)] FAIL $w sp_$cluster — PC stuck at reset vector 0x1000 (spike rc=$spike_rc, ${dt}s)" | tee -a "$LOG"
@@ -264,10 +283,10 @@ export SPIKE OBJCOPY LD NM READELF SPIKE_DEVICES IMG_BASE SIMPOINT_DIR CKPT_DIR 
 
 active=0
 for w in "${WORKLOADS[@]}"; do
-  validate_one "$w" &
+  validate_one "$w" </dev/null &
   ((active++))
   if [ $active -ge $JOBS ]; then
-    wait -n 2>/dev/null || wait
+    wait -n 2>/dev/null
     ((active--))
   fi
 done
@@ -285,7 +304,7 @@ for w in "${WORKLOADS[@]}"; do
   if [ -f "$dir/mem.elf" ] && [ -s "$dir/mem.elf" ]; then
     status=$(check_loadarch "$dir/loadarch")
     case "$status" in
-      OK:*) echo "OK    $w (sp_$smallest_cluster, interval=$smallest_interval)" ;;
+      OK:*) echo "OK    $w (sp_$smallest_cluster, interval=$smallest_interval, pc=${status#OK:})" ;;
       *)    echo "FAIL  $w (sp_$smallest_cluster: $status)" ;;
     esac
   else
