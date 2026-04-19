@@ -2,40 +2,53 @@
 # generate_slurm_scripts.sh
 #
 # Pre-materializes self-contained sbatch scripts for the SPEC2017 intspeed
-# checkpoint pipeline — one .sbatch file per (workload, simpoint) tuple from
-# the .simpoints files. Each generated .sbatch inlines the entire spike
-# invocation + sparse_bin_to_elf.py conversion, so there's no indirection —
-# just submit the file with `sbatch` and it self-describes.
+# checkpoint pipeline. Every generated .sbatch file inlines the full spike
+# invocation + sparse_bin_to_elf.py conversion — submit one with `sbatch`
+# and it's fully self-describing.
+#
+# Emits two sets, both covering all 77 (workload, simpoint) tuples from the
+# .simpoints files:
+#   validation/  — 77 sbatch files, 1-hour walltime, SEPARATE output tree at
+#                  /bigtemp2/.../intspeed-fullsystem-validation/. Every job
+#                  gets dispatched so you can confirm each of the 77 actually
+#                  starts. Jobs that finish before the hour produce real
+#                  checkpoints in the validation tree (not the production
+#                  tree). Jobs killed by walltime show spike was running via
+#                  the slurm .err log.
+#   production/  — 77 sbatch files, 4-day walltime, writing to the real
+#                  /bigtemp2/.../intspeed-fullsystem/ tree.
 #
 # Output layout:
-#   /p/csd/jht9sy/checkpoints/slurm-scripts/ckpt-<workload>-sp<N>.sbatch
+#   /p/csd/jht9sy/checkpoints/slurm-scripts/validation/validate-<w>-sp<N>.sbatch
+#   /p/csd/jht9sy/checkpoints/slurm-scripts/production/checkpoint-<w>-sp<N>.sbatch
+#   /bigtemp2/jht9sy/checkpoints/intspeed-fullsystem-validation/{<w>/sp_<N>/,logs/}
 #   /bigtemp2/jht9sy/checkpoints/intspeed-fullsystem/{<w>/sp_<N>/,logs/}
 #
 # Usage:
-#   ./generate_slurm_scripts.sh [--force]
-#     --force   overwrite existing .sbatch files
+#   ./generate_slurm_scripts.sh
+# Always overwrites existing .sbatch files.
 
 set -eu
-
-FORCE=0
-[ "${1:-}" = "--force" ] && FORCE=1
 
 SPECKLE_DIR="$(cd "$(dirname "$0")" && pwd)"
 SIMPOINT_DIR=/p/csd/jht9sy/checkpoints/simpoints
 IMG_BASE=/p/csd/jht9sy/checkpoints/images
 RT=/p/csd/jht9sy/chipyard/.conda-env/riscv-tools
 
-SCRIPT_DIR=/p/csd/jht9sy/checkpoints/slurm-scripts
-CKPT_DIR=/bigtemp2/jht9sy/checkpoints/intspeed-fullsystem
-LOG_DIR=$CKPT_DIR/logs
+VAL_CKPT_DIR=/bigtemp2/jht9sy/checkpoints/intspeed-fullsystem-validation
+VAL_LOG_DIR=$VAL_CKPT_DIR/logs
+VAL_SCRIPT_DIR=/p/csd/jht9sy/checkpoints/slurm-scripts/validation
+VAL_TIME=01:00:00
+
+PROD_CKPT_DIR=/bigtemp2/jht9sy/checkpoints/intspeed-fullsystem
+PROD_LOG_DIR=$PROD_CKPT_DIR/logs
+PROD_SCRIPT_DIR=/p/csd/jht9sy/checkpoints/slurm-scripts/production
+PROD_TIME=4-00:00:00
+
 PARTITION=cpu
-TIME=4-00:00:00
-MEM=32G
+MEM=40G
 
-MAIL_USER=jht9sy@virginia.edu
-MAIL_TYPE=begin,end,fail
-
-mkdir -p "$SCRIPT_DIR" "$LOG_DIR"
+mkdir -p "$VAL_SCRIPT_DIR" "$PROD_SCRIPT_DIR" "$VAL_LOG_DIR" "$PROD_LOG_DIR"
 
 emit_sbatch() {
   # $1 = output .sbatch path
@@ -45,11 +58,6 @@ emit_sbatch() {
   # $7 = workload, $8 = cluster label, $9 = interval, ${10} = ckpt dir
   local out=$1 jobname=$2 part=$3 time=$4 mem=$5 logdir=$6
   local workload=$7 cluster=$8 interval=$9 ckptdir=${10}
-
-  if [ "$FORCE" = "0" ] && [ -e "$out" ]; then
-    echo "SKIP (exists) $out"
-    return
-  fi
 
   # Header: expanded at generation time — bakes job-specific values in.
   cat > "$out" <<HEADER
@@ -63,10 +71,6 @@ emit_sbatch() {
 #SBATCH --nodes=1
 #SBATCH --output=$logdir/$jobname-%j.out
 #SBATCH --error=$logdir/$jobname-%j.err
-#SBATCH --mail-user=$MAIL_USER
-#SBATCH --mail-type=$MAIL_TYPE
-
-set -u
 
 # Job-specific values (baked in by generate_slurm_scripts.sh)
 WORKLOAD=$workload
@@ -82,7 +86,7 @@ HEADER
 # ---- Toolchain + paths (identical for every checkpoint job) -----------------
 SPECKLE_DIR=/p/csd/jht9sy/speckle-2017
 CHIPYARD=/p/csd/jht9sy/chipyard
-source "$CHIPYARD/env.sh" 2>/dev/null || true
+source "$CHIPYARD/env.sh"
 
 RT=$CHIPYARD/.conda-env/riscv-tools
 SPIKE=$RT/bin/spike
@@ -198,7 +202,7 @@ dt=$(( $(date +%s) - t0 ))
 
 mem_dump="$outdir/mem.$MEM_BASE.bin"
 if [ ! -f "$mem_dump" ]; then
-  echo "FAIL $w sp_$cluster — no memory dump after ${dt}s (spike rc=$spike_rc)" | tee "$outdir/slurm_status"
+  echo "FAIL $w sp_$cluster — no memory dump after ${dt}s (spike rc=$spike_rc)" | tee "$outdir/status"
   exit 1
 fi
 
@@ -215,8 +219,7 @@ sparse_args=()
 
 python3 "$SPECKLE_DIR/sparse_bin_to_elf.py" \
     "$mem_dump" "$mem_elf" "$MEM_BASE" \
-    "${sparse_args[@]}" \
-    --delete-input
+    "${sparse_args[@]}"
 
 # ---- Validate the result ----------------------------------------------------
 fail_reason=""
@@ -239,12 +242,12 @@ elif [ "$nlines" -ne 95 ]; then
 fi
 
 if [ -n "$fail_reason" ]; then
-  echo "FAIL $w sp_$cluster — ${dt}s, $fail_reason (spike rc=$spike_rc)" | tee "$outdir/slurm_status"
+  echo "FAIL $w sp_$cluster — ${dt}s, $fail_reason (spike rc=$spike_rc)" | tee "$outdir/status"
   exit 1
 fi
 
 mem_sz=$(du -sh "$mem_elf" | cut -f1)
-echo "DONE $w sp_$cluster — ${dt}s, pc=$pc, mem=$mem_sz (spike rc=$spike_rc)" | tee "$outdir/slurm_status"
+echo "DONE $w sp_$cluster — ${dt}s, pc=$pc, mem=$mem_sz (spike rc=$spike_rc)" | tee "$outdir/status"
 exit 0
 BODY
 
@@ -252,7 +255,7 @@ BODY
   echo "WROTE $out"
 }
 
-echo "=== Generating checkpoint sbatch scripts ==="
+echo "=== Generating validation sbatch scripts (77 — all simpoints, 1-hour walltime, separate output tree) ==="
 for sp_file in "$SIMPOINT_DIR"/*.simpoints; do
   [ -e "$sp_file" ] || continue
   w=$(basename "$sp_file" .simpoints)
@@ -260,16 +263,32 @@ for sp_file in "$SIMPOINT_DIR"/*.simpoints; do
     [ -n "${interval:-}" ] || continue
     [ -n "${cluster:-}" ]  || continue
     emit_sbatch \
-      "$SCRIPT_DIR/ckpt-$w-sp$cluster.sbatch" \
-      "ckpt-$w-sp$cluster" \
-      "$PARTITION" "$TIME" "$MEM" \
-      "$LOG_DIR" \
-      "$w" "$cluster" "$interval" "$CKPT_DIR"
+      "$VAL_SCRIPT_DIR/validate-$w-sp$cluster.sbatch" \
+      "validate-$w-sp$cluster" \
+      "$PARTITION" "$VAL_TIME" "$MEM" \
+      "$VAL_LOG_DIR" \
+      "$w" "$cluster" "$interval" "$VAL_CKPT_DIR"
+  done < "$sp_file"
+done
+
+echo ""
+echo "=== Generating production sbatch scripts (77 — all simpoints, 4-day walltime) ==="
+for sp_file in "$SIMPOINT_DIR"/*.simpoints; do
+  [ -e "$sp_file" ] || continue
+  w=$(basename "$sp_file" .simpoints)
+  while read interval cluster; do
+    [ -n "${interval:-}" ] || continue
+    [ -n "${cluster:-}" ]  || continue
+    emit_sbatch \
+      "$PROD_SCRIPT_DIR/checkpoint-$w-sp$cluster.sbatch" \
+      "checkpoint-$w-sp$cluster" \
+      "$PARTITION" "$PROD_TIME" "$MEM" \
+      "$PROD_LOG_DIR" \
+      "$w" "$cluster" "$interval" "$PROD_CKPT_DIR"
   done < "$sp_file"
 done
 
 echo ""
 echo "=== Summary ==="
-echo "Scripts: $SCRIPT_DIR/  ($(ls "$SCRIPT_DIR"/*.sbatch 2>/dev/null | wc -l) files)"
-echo "Logs:    $LOG_DIR"
-echo "Ckpts:   $CKPT_DIR"
+echo "Validation scripts: $VAL_SCRIPT_DIR/  ($(ls "$VAL_SCRIPT_DIR"/*.sbatch 2>/dev/null | wc -l) files, 1-hour walltime → $VAL_CKPT_DIR)"
+echo "Production scripts: $PROD_SCRIPT_DIR/ ($(ls "$PROD_SCRIPT_DIR"/*.sbatch 2>/dev/null | wc -l) files, 4-day walltime → $PROD_CKPT_DIR)"
