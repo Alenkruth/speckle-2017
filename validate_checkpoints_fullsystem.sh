@@ -20,15 +20,13 @@ SPECKLE_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 RT=/p/csd/jht9sy/chipyard/.conda-env/riscv-tools
 SPIKE=$RT/bin/spike
-OBJCOPY=$RT/bin/riscv64-unknown-elf-objcopy
-LD=$RT/bin/riscv64-unknown-elf-ld
 NM=$RT/bin/riscv64-unknown-elf-nm
 READELF=$RT/bin/riscv64-unknown-elf-readelf
 SPIKE_DEVICES=$RT/lib/libspikedevices.so
 
 IMG_BASE=/p/csd/jht9sy/checkpoints/images
 SIMPOINT_ROOT=/p/csd/jht9sy/checkpoints/simpoints
-CKPT_DIR=/p/csd/jht9sy/checkpoints/sanity/intspeed-fullsystem
+CKPT_DIR=/bigtemp2/jht9sy/checkpoints/sanity/intspeed-fullsystem
 INTERVAL=100000000
 ISA=rv64gc
 MEM_BASE=0x80000000
@@ -50,9 +48,8 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-[ -x "$SPIKE" ]   || { echo "ERROR: spike not found at $SPIKE"; exit 1; }
-[ -x "$OBJCOPY" ] || { echo "ERROR: objcopy not found at $OBJCOPY"; exit 1; }
-[ -x "$LD" ]      || { echo "ERROR: ld not found at $LD"; exit 1; }
+[ -x "$SPIKE" ]                            || { echo "ERROR: spike not found at $SPIKE"; exit 1; }
+[ -f "$SPECKLE_DIR/sparse_bin_to_elf.py" ] || { echo "ERROR: sparse_bin_to_elf.py not found in $SPECKLE_DIR"; exit 1; }
 
 SIMPOINT_DIR=${SIMPOINT_DIR_OVERRIDE:-$SIMPOINT_ROOT/${SUITE}-fullsystem}
 
@@ -220,21 +217,22 @@ validate_one() {
   local spike_rc=$?
   local dt=$(( $(date +%s) - t0 ))
 
-  # Convert memory dump to ELF — spike wrote it inside $outdir
+  # Convert sparse memory dump to ELF without materialising 32 GB of zeros.
   local mem_dump="$outdir/mem.$MEM_BASE.bin"
   if [ -f "$mem_dump" ]; then
-    local raw_elf=$outdir/raw.elf
     local mem_elf=$outdir/mem.elf
-    $OBJCOPY -I binary -O elf64-littleriscv "$mem_dump" "$raw_elf" 2>/dev/null
     local tohost fromhost
     tohost=$($NM "$bin" 2>/dev/null | awk '/ tohost$/ {print $1}' | head -1)
     fromhost=$($NM "$bin" 2>/dev/null | awk '/ fromhost$/ {print $1}' | head -1)
-    if [ -n "$tohost" ] && [ -n "$fromhost" ]; then
-      $LD -Tdata=$MEM_BASE -nmagic --defsym "tohost=0x$tohost" --defsym "fromhost=0x$fromhost" -o "$mem_elf" "$raw_elf" 2>/dev/null
-    else
-      $LD -Tdata=$MEM_BASE -nmagic -o "$mem_elf" "$raw_elf" 2>/dev/null
-    fi
-    rm -f "$raw_elf" "$mem_dump"
+
+    local sparse_args=()
+    [ -n "$tohost" ]   && sparse_args+=(--tohost   "0x$tohost")
+    [ -n "$fromhost" ] && sparse_args+=(--fromhost "0x$fromhost")
+
+    python3 "$SPECKLE_DIR/sparse_bin_to_elf.py" \
+        "$mem_dump" "$mem_elf" "$MEM_BASE" \
+        "${sparse_args[@]}" \
+        --delete-input 2>/dev/null
   fi
 
   # Validate the loadarch
@@ -279,7 +277,7 @@ validate_one() {
 }
 
 export -f validate_one check_loadarch
-export SPIKE OBJCOPY LD NM READELF SPIKE_DEVICES IMG_BASE SIMPOINT_DIR CKPT_DIR INTERVAL ISA MEM_BASE MEM_SIZE LOG
+export SPIKE NM READELF SPIKE_DEVICES IMG_BASE SIMPOINT_DIR CKPT_DIR INTERVAL ISA MEM_BASE MEM_SIZE LOG SPECKLE_DIR
 
 active=0
 for w in "${WORKLOADS[@]}"; do

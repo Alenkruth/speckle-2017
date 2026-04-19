@@ -29,17 +29,15 @@ set -u
 
 SPECKLE_DIR="$(cd "$(dirname "$0")" && pwd)"
 
-RT=/home/jht9sy/work/chipyard/.conda-env/riscv-tools
+RT=/p/csd/jht9sy/chipyard/.conda-env/riscv-tools
 SPIKE=$RT/bin/spike
-OBJCOPY=$RT/bin/riscv64-unknown-elf-objcopy
-LD=$RT/bin/riscv64-unknown-elf-ld
 NM=$RT/bin/riscv64-unknown-elf-nm
 READELF=$RT/bin/riscv64-unknown-elf-readelf
 SPIKE_DEVICES=$RT/lib/libspikedevices.so
 
-IMG_BASE=/home/jht9sy/work/chipyard/software/firemarshal/images/firechip
-SIMPOINT_ROOT=/data/akrish/riscv-simpoints
-CKPT_ROOT=/data/akrish/checkpoints
+IMG_BASE=/p/csd/jht9sy/checkpoints/images
+SIMPOINT_ROOT=/p/csd/jht9sy/checkpoints/simpoints
+CKPT_ROOT=/bigtemp2/jht9sy/checkpoints
 INTERVAL=100000000
 ISA=rv64gc
 MEM_BASE=0x80000000
@@ -63,9 +61,8 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-[ -x "$SPIKE" ]    || { echo "ERROR: spike not found at $SPIKE"; exit 1; }
-[ -x "$OBJCOPY" ]  || { echo "ERROR: objcopy not found at $OBJCOPY"; exit 1; }
-[ -x "$LD" ]       || { echo "ERROR: ld not found at $LD"; exit 1; }
+[ -x "$SPIKE" ]                            || { echo "ERROR: spike not found at $SPIKE"; exit 1; }
+[ -f "$SPECKLE_DIR/sparse_bin_to_elf.py" ] || { echo "ERROR: sparse_bin_to_elf.py not found in $SPECKLE_DIR"; exit 1; }
 
 SIMPOINT_DIR=${SIMPOINT_DIR_OVERRIDE:-$SIMPOINT_ROOT/${SUITE}-fullsystem}
 CKPT_DIR=${CKPT_DIR_OVERRIDE:-$CKPT_ROOT/${SUITE}-fullsystem}
@@ -213,23 +210,23 @@ generate_one_checkpoint() {
     return
   fi
 
-  local raw_elf=$outdir/raw.elf
   local mem_elf=$outdir/mem.elf
-
-  $OBJCOPY -I binary -O elf64-littleriscv "$mem_dump" "$raw_elf"
 
   # Find tohost/fromhost symbols for HTIF
   local tohost fromhost
   tohost=$($NM "$bin" 2>/dev/null | awk '/ tohost$/ {print $1}' | head -1)
   fromhost=$($NM "$bin" 2>/dev/null | awk '/ fromhost$/ {print $1}' | head -1)
 
-  if [ -n "$tohost" ] && [ -n "$fromhost" ]; then
-    $LD -Tdata=$MEM_BASE -nmagic --defsym "tohost=0x$tohost" --defsym "fromhost=0x$fromhost" -o "$mem_elf" "$raw_elf"
-  else
-    $LD -Tdata=$MEM_BASE -nmagic -o "$mem_elf" "$raw_elf"
-  fi
+  # Sparse ELF conversion — avoids materialising the 32 GB zero-fill that
+  # objcopy -I binary would produce.
+  local sparse_args=()
+  [ -n "$tohost" ]   && sparse_args+=(--tohost   "0x$tohost")
+  [ -n "$fromhost" ] && sparse_args+=(--fromhost "0x$fromhost")
 
-  rm -f "$raw_elf" "$mem_dump"
+  python3 "$SPECKLE_DIR/sparse_bin_to_elf.py" \
+      "$mem_dump" "$mem_elf" "$MEM_BASE" \
+      "${sparse_args[@]}" \
+      --delete-input
 
   # Validate the loadarch for errors spike may have dumped
   local ckpt_ok=1
@@ -253,7 +250,7 @@ generate_one_checkpoint() {
 }
 
 export -f generate_one_checkpoint
-export SPIKE OBJCOPY LD NM READELF SPIKE_DEVICES IMG_BASE CKPT_DIR INTERVAL ISA MEM_BASE MEM_SIZE LOG
+export SPIKE NM READELF SPIKE_DEVICES IMG_BASE CKPT_DIR INTERVAL ISA MEM_BASE MEM_SIZE LOG SPECKLE_DIR
 
 # Build a flat list of (workload, cluster, interval) tuples and run in parallel
 active=0
