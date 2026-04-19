@@ -18,7 +18,7 @@ set -u
 
 SPECKLE_DIR="$(cd "$(dirname "$0")" && pwd)"
 
-RT=/home/jht9sy/work/chipyard/.conda-env/riscv-tools
+RT=/p/csd/jht9sy/chipyard/.conda-env/riscv-tools
 SPIKE=$RT/bin/spike
 OBJCOPY=$RT/bin/riscv64-unknown-elf-objcopy
 LD=$RT/bin/riscv64-unknown-elf-ld
@@ -26,14 +26,14 @@ NM=$RT/bin/riscv64-unknown-elf-nm
 READELF=$RT/bin/riscv64-unknown-elf-readelf
 SPIKE_DEVICES=$RT/lib/libspikedevices.so
 
-IMG_BASE=/home/jht9sy/work/chipyard/software/firemarshal/images/firechip
-SIMPOINT_ROOT=/data/akrish/riscv-simpoints
-CKPT_DIR=/data/akrish/checkpoints/sanity/intspeed-fullsystem
+IMG_BASE=/p/csd/jht9sy/checkpoints/images
+SIMPOINT_ROOT=/p/csd/jht9sy/checkpoints/simpoints
+CKPT_DIR=/p/csd/jht9sy/checkpoints/sanity/intspeed-fullsystem
 INTERVAL=100000000
 ISA=rv64gc
 MEM_BASE=0x80000000
 MEM_SIZE=0x800000000
-JOBS=4
+JOBS=60
 SUITE=intspeed
 SIMPOINT_DIR_OVERRIDE=""
 WORKLOADS=()
